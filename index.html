@@ -1413,6 +1413,19 @@
       link.click();
     }
 
+    // Base64url helpers: standard base64 uses +, /, = which some chat apps
+    // (WhatsApp, etc.) mangle or truncate when auto-linkifying pasted text.
+    // Base64url only uses A-Z a-z 0-9 - _ which every app treats as plain text.
+    function toBase64Url(str) {
+      const b64 = btoa(unescape(encodeURIComponent(str)));
+      return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+    function fromBase64Url(b64url) {
+      let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      return decodeURIComponent(escape(atob(b64)));
+    }
+
     // ===== SHARE REPORT (view-only link, no login required) =====
     // Encodes the currently filtered report into the URL itself (base64 JSON in the
     // hash), so anyone opening the link sees the exact same snapshot instantly —
@@ -1453,7 +1466,7 @@
 
       let encoded;
       try {
-        encoded = btoa(unescape(encodeURIComponent(JSON.stringify(snapshot))));
+        encoded = toBase64Url(JSON.stringify(snapshot));
       } catch (err) {
         alert('Could not generate share link: ' + err.message);
         return;
@@ -1502,17 +1515,48 @@
     function checkSharedView() {
       const hash = window.location.hash;
       if (!hash.startsWith('#shared=')) return false;
+      const encoded = hash.substring('#shared='.length);
+      let json = null;
       try {
-        const encoded = hash.substring('#shared='.length);
-        const json = decodeURIComponent(escape(atob(encoded)));
+        // Current format: base64url (safe against link-mangling apps)
+        json = fromBase64Url(encoded);
         sharedSnapshot = JSON.parse(json);
-      } catch (err) {
-        console.error('Invalid or corrupted share link:', err);
-        return false;
+      } catch (err1) {
+        try {
+          // Fallback: older standard-base64 links, in case one is still floating around
+          json = decodeURIComponent(escape(atob(encoded)));
+          sharedSnapshot = JSON.parse(json);
+        } catch (err2) {
+          console.error('Invalid or corrupted share link:', err1, err2);
+          renderSharedLinkError();
+          return true; // we still take over the page to show the error nicely
+        }
+      }
+      if (!sharedSnapshot || !Array.isArray(sharedSnapshot.records) || !sharedSnapshot.summary) {
+        console.error('Share link decoded but data is incomplete:', sharedSnapshot);
+        renderSharedLinkError();
+        return true;
       }
       isSharedView = true;
       renderSharedReport();
       return true;
+    }
+
+    function renderSharedLinkError() {
+      document.getElementById('loginPage').classList.add('hidden');
+      document.getElementById('mainApp').classList.remove('hidden');
+      document.getElementById('navTabs').classList.add('hidden');
+      document.getElementById('navUser').innerHTML = '<div style="color:var(--gold);font-weight:700;font-size:13px;">🔗 Shared Report</div>';
+      document.getElementById('learningPage').classList.add('hidden');
+      document.getElementById('reportPage').classList.remove('hidden');
+      document.getElementById('reportControlsCard').classList.add('hidden');
+      document.getElementById('sharedBanner').classList.remove('hidden');
+      document.getElementById('sharedBanner').style.background = 'var(--red)';
+      document.getElementById('sharedBanner').style.color = 'var(--white)';
+      document.getElementById('sharedBanner').innerHTML =
+        '<span style="font-size:18px;">⚠️</span><span>This share link looks incomplete or got corrupted while being forwarded. Ask whoever sent it to copy the link again using the Share Report button and send it as plain text (not as a shortened/preview link).</span>';
+      document.getElementById('reportTable').innerHTML =
+        '<tr><td colspan="6" class="empty-state"><div style="font-size:32px;">⚠️</div><div style="font-weight:600;margin-top:8px;">Could not load the shared report</div></td></tr>';
     }
 
     function renderSharedReport() {
