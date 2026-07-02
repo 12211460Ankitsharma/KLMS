@@ -537,11 +537,11 @@
           <div class="nav-sub">Jewellery • Training • Excellence</div>
         </div>
       </div>
-      <div class="nav-tabs">
+      <div class="nav-tabs" id="navTabs">
         <button class="nav-tab active" id="tabLearning" onclick="switchTab('Learning')">Learning</button>
         <button class="nav-tab" id="tabReport" onclick="switchTab('Report')">Attendance Report</button>
       </div>
-      <div class="nav-user">
+      <div class="nav-user" id="navUser">
         <div>
           <div id="userName" style="color: var(--white); font-weight: 600;"></div>
           <div id="userDept" style="font-size: 11px;"></div>
@@ -624,7 +624,12 @@
       <div class="page-header">
         <div class="page-subtitle">Analytics</div>
         <h1 class="page-title">Attendance Report</h1>
-        <p class="page-desc">Filter and review all training attendance records</p>
+        <p class="page-desc" id="reportPageDesc">Filter and review all training attendance records</p>
+      </div>
+
+      <div id="sharedBanner" class="hidden" style="background:var(--navy);color:var(--gold);border-radius:10px;padding:12px 18px;margin-bottom:20px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">🔗</span>
+        <span>You're viewing a shared, read-only snapshot of this report. No login required.</span>
       </div>
       
       <div class="summary-grid">
@@ -651,7 +656,7 @@
         </div>
       </div>
       
-      <div class="card" style="padding: 20px; margin-bottom: 24px; display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; justify-content: space-between;">
+      <div class="card" id="reportControlsCard" style="padding: 20px; margin-bottom: 24px; display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; justify-content: space-between;">
         <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
           <div>
             <label>Date From</label>
@@ -720,7 +725,8 @@
         </div>
         <button class="btn-primary" onclick="filterReport()">Find →</button>
         <button class="btn-outline" onclick="resetReport()">Reset</button>
-        <button class="btn-outline" onclick="downloadReport()" style="margin-left: auto;">📥 Download CSV</button>
+        <button class="btn-outline" onclick="shareReport()" style="margin-left: auto;">🔗 Share Report</button>
+        <button class="btn-outline" onclick="downloadReport()">📥 Download CSV</button>
       </div>
       
       <div class="card">
@@ -828,6 +834,30 @@
           <button class="btn-primary" style="flex: 1;" onclick="saveAttendance()">✔ Save Attendance</button>
           <button class="btn-outline" onclick="closeModal()">Cancel</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="shareModal" class="modal-overlay hidden">
+    <div class="modal-content" style="max-width:480px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Shareable Link</div>
+          <div class="modal-name">View-only Report Snapshot</div>
+        </div>
+        <button class="modal-close" onclick="closeShareModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;color:var(--slate);margin-bottom:14px;">Anyone who opens this link will see this exact report immediately &mdash; no login needed.</p>
+        <div class="form-group">
+          <label>Link</label>
+          <input type="text" id="shareLinkInput" readonly onclick="this.select()">
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button class="btn-primary" style="flex:1;" onclick="copyShareLink()">📋 Copy Link</button>
+          <button class="btn-outline" onclick="closeShareModal()">Close</button>
+        </div>
+        <div id="shareCopyMsg" style="font-size:12px;color:var(--gold);margin-top:10px;font-weight:600;"></div>
       </div>
     </div>
   </div>
@@ -949,6 +979,10 @@
     let currentUser = null;
     let attendanceRecords = [];
     let currentModule = null;
+
+    // If true, we're rendering a shared read-only snapshot (no login, no editing)
+    let isSharedView = false;
+    let sharedSnapshot = null;
     
     // Load attendance records from localStorage for persistence
     const savedAttendance = localStorage.getItem('attendanceRecords');
@@ -1328,16 +1362,18 @@
       document.getElementById('reportTopicFilter').value = '';
       renderReport();
     }
-    
-    function downloadReport() {
+
+    // Returns the currently-filtered set of attendance records (same logic used by
+    // the on-screen report and the CSV export), for sharing / exporting.
+    function getCurrentFilteredRecords() {
       const topicFilter = document.getElementById('reportTopicFilter').value;
       const dateFrom = document.getElementById('dateFrom').value;
       const dateTo = document.getElementById('dateTo').value;
-      
-      let filtered = attendanceRecords.filter(r => {
+
+      return attendanceRecords.filter(r => {
         const matchTopic = !topicFilter || r.module.topic === topicFilter;
         const isImported = r.date === 'Excel Import' || r.isImported;
-        
+
         if (dateFrom || dateTo) {
           if (isImported) return false;
           let recDate;
@@ -1354,6 +1390,10 @@
         }
         return matchTopic;
       });
+    }
+    
+    function downloadReport() {
+      const filtered = getCurrentFilteredRecords();
       
       if (filtered.length === 0) {
         alert('No data to download. Apply filters first.');
@@ -1371,6 +1411,152 @@
       link.href = URL.createObjectURL(blob);
       link.download = `attendance_report_${new Date().toISOString().split('T')[0]}.csv`;
       link.click();
+    }
+
+    // ===== SHARE REPORT (view-only link, no login required) =====
+    // Encodes the currently filtered report into the URL itself (base64 JSON in the
+    // hash), so anyone opening the link sees the exact same snapshot instantly —
+    // nothing has to be looked up in Firebase/localStorage on their device.
+    function shareReport() {
+      const filtered = getCurrentFilteredRecords();
+
+      if (filtered.length === 0) {
+        alert('No data to share yet. Click "Find" (optionally with filters) to load records, then share.');
+        return;
+      }
+
+      const topicFilter = document.getElementById('reportTopicFilter').value;
+      const dateFrom = document.getElementById('dateFrom').value;
+      const dateTo = document.getElementById('dateTo').value;
+
+      const snapshot = {
+        generatedAt: new Date().toLocaleString('en-IN'),
+        filters: {
+          topic: topicFilter || 'All Topics',
+          dateFrom: dateFrom || null,
+          dateTo: dateTo || null
+        },
+        summary: {
+          sessions: filtered.length,
+          attendees: filtered.reduce((s, r) => s + r.count, 0),
+          topics: new Set(filtered.map(r => r.module.topic)).size
+        },
+        records: filtered.map(r => ({
+          title: r.module.title,
+          topic: r.module.topic,
+          count: r.count,
+          names: r.attendees ? r.attendees.map(a => `${a.name} (${a.dept || '—'})`) : r.names,
+          date: r.date,
+          time: r.time
+        }))
+      };
+
+      let encoded;
+      try {
+        encoded = btoa(unescape(encodeURIComponent(JSON.stringify(snapshot))));
+      } catch (err) {
+        alert('Could not generate share link: ' + err.message);
+        return;
+      }
+
+      const shareUrl = `${location.origin}${location.pathname}#shared=${encoded}`;
+
+      if (shareUrl.length > 65000) {
+        alert('This report has too many records to fit in a single link. Try narrowing the date range / topic filter first, or use Download CSV instead.');
+        return;
+      }
+
+      openShareModal(shareUrl);
+    }
+
+    function openShareModal(url) {
+      document.getElementById('shareLinkInput').value = url;
+      document.getElementById('shareCopyMsg').textContent = '';
+      document.getElementById('shareModal').classList.remove('hidden');
+    }
+
+    function closeShareModal() {
+      document.getElementById('shareModal').classList.add('hidden');
+    }
+
+    function copyShareLink() {
+      const input = document.getElementById('shareLinkInput');
+      const msg = document.getElementById('shareCopyMsg');
+      input.select();
+      input.setSelectionRange(0, 99999);
+      let copied = false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(input.value);
+          copied = true;
+        }
+      } catch (e) { /* fall through to execCommand */ }
+      if (!copied) {
+        try { copied = document.execCommand('copy'); } catch (e) { copied = false; }
+      }
+      msg.textContent = copied ? '✓ Link copied — paste it in WhatsApp, email, etc.' : 'Could not auto-copy — please copy the link manually.';
+    }
+
+    // Detects a #shared=... link and renders the embedded snapshot directly,
+    // completely bypassing the login page.
+    function checkSharedView() {
+      const hash = window.location.hash;
+      if (!hash.startsWith('#shared=')) return false;
+      try {
+        const encoded = hash.substring('#shared='.length);
+        const json = decodeURIComponent(escape(atob(encoded)));
+        sharedSnapshot = JSON.parse(json);
+      } catch (err) {
+        console.error('Invalid or corrupted share link:', err);
+        return false;
+      }
+      isSharedView = true;
+      renderSharedReport();
+      return true;
+    }
+
+    function renderSharedReport() {
+      // Skip login entirely, jump straight to the app shell.
+      document.getElementById('loginPage').classList.add('hidden');
+      document.getElementById('mainApp').classList.remove('hidden');
+
+      // Simplify the nav: no tabs to switch (nothing else to see), no logout.
+      document.getElementById('navTabs').classList.add('hidden');
+      document.getElementById('navUser').innerHTML = '<div style="color:var(--gold);font-weight:700;font-size:13px;">🔗 Shared Report</div>';
+
+      // Show only the report page, hide the learning page.
+      document.getElementById('learningPage').classList.add('hidden');
+      document.getElementById('reportPage').classList.remove('hidden');
+
+      // Banner + read-only tweaks
+      document.getElementById('sharedBanner').classList.remove('hidden');
+      document.getElementById('reportPageDesc').textContent =
+        `Snapshot shared on ${sharedSnapshot.generatedAt} · Topic: ${sharedSnapshot.filters.topic}` +
+        (sharedSnapshot.filters.dateFrom || sharedSnapshot.filters.dateTo
+          ? ` · ${sharedSnapshot.filters.dateFrom || 'any'} to ${sharedSnapshot.filters.dateTo || 'any'}`
+          : '');
+
+      // Hide the interactive filter/find/share controls — this is a frozen snapshot.
+      document.getElementById('reportControlsCard').classList.add('hidden');
+
+      // Fill summary cards from the snapshot.
+      document.getElementById('totalSessions').textContent = sharedSnapshot.summary.sessions;
+      document.getElementById('totalAttendees').textContent = sharedSnapshot.summary.attendees;
+      document.getElementById('topicsCovered').textContent = sharedSnapshot.summary.topics;
+
+      // Fill the table from the snapshot.
+      const tbody = document.getElementById('reportTable');
+      tbody.innerHTML = sharedSnapshot.records.map((r, i) => {
+        const nameList = r.names.map(n => `<span style="display:inline-block;background:var(--navy)11;border-radius:4px;padding:3px 8px;margin:2px;font-size:11px;border:1px solid var(--border);">${n}</span>`).join('');
+        return `<tr style="${i % 2 === 0 ? 'background:var(--white);' : 'background:var(--rowAlt);'}">
+          <td style="font-weight:600;color:var(--navy);">${i + 1}</td>
+          <td style="font-weight:600;color:var(--navy);max-width:180px;font-size:12px;">${r.title}</td>
+          <td style="font-weight:700;color:var(--gold);font-size:16px;">${r.count}</td>
+          <td style="max-width:320px;">${nameList}</td>
+          <td style="color:var(--muted);font-size:12px;">${r.date}</td>
+          <td style="color:var(--muted);font-size:12px;">${r.time}</td>
+        </tr>`;
+      }).join('');
     }
 
     // Loads employees from Firestore. On first-ever run (empty collection)
@@ -1395,10 +1581,14 @@
     document.getElementById('password').addEventListener('keypress', function(e) {
       if (e.key === 'Enter') handleLogin();
     });
-    
-    renderModules();
-    EMPLOYEES = SEED_EMPLOYEES.slice();
-    window.addEventListener('load', initEmployeesFromFirebase);
+
+    // If this page was opened via a shared report link, show that snapshot and
+    // skip the normal login/module flow entirely.
+    if (!checkSharedView()) {
+      renderModules();
+      EMPLOYEES = SEED_EMPLOYEES.slice();
+      window.addEventListener('load', initEmployeesFromFirebase);
+    }
   </script>
 </body>
 </html>
