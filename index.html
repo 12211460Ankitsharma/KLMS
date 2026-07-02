@@ -1432,10 +1432,23 @@
     // nothing has to be looked up in Firebase/localStorage on their device.
     function shareReport() {
       const filtered = getCurrentFilteredRecords();
+      const totalRecords = attendanceRecords.length;
 
       if (filtered.length === 0) {
         alert('No data to share yet. Click "Find" (optionally with filters) to load records, then share.');
         return;
+      }
+
+      // Warn if sharing very few records when more exist
+      if (filtered.length < totalRecords && totalRecords > 0) {
+        const confirmShare = confirm(
+          `You are about to share only ${filtered.length} record(s) out of ${totalRecords} total records in the system.\n\n` +
+          `This might be because:\n` +
+          `- You haven't clicked "Find" yet to load all data\n` +
+          `- Your date/topic filters are too restrictive\n\n` +
+          `Click "Cancel" then click "Reset" and "Find" to share all records, or click "OK" to share only the current filtered view.`
+        );
+        if (!confirmShare) return;
       }
 
       const topicFilter = document.getElementById('reportTopicFilter').value;
@@ -1560,6 +1573,10 @@
     }
 
     function renderSharedReport() {
+      console.log('[Shared Report] Rendering snapshot with', sharedSnapshot.records.length, 'records');
+      console.log('[Shared Report] Summary:', sharedSnapshot.summary);
+      console.log('[Shared Report] Filters:', sharedSnapshot.filters);
+
       // Skip login entirely, jump straight to the app shell.
       document.getElementById('loginPage').classList.add('hidden');
       document.getElementById('mainApp').classList.remove('hidden');
@@ -1588,35 +1605,24 @@
       document.getElementById('totalAttendees').textContent = sharedSnapshot.summary.attendees;
       document.getElementById('topicsCovered').textContent = sharedSnapshot.summary.topics;
 
-      // Debug aid: open the browser console and check window.__sharedDebug
-      // to see exactly what was decoded from the link.
-      window.__sharedDebug = sharedSnapshot;
-      console.log('[Shared Report] decoded snapshot:', sharedSnapshot);
-      console.log('[Shared Report] record count:', sharedSnapshot.records.length);
-
       // Fill the table from the snapshot.
       const tbody = document.getElementById('reportTable');
       if (sharedSnapshot.records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div style="font-size:32px;">📭</div><div style="font-weight:600;margin-top:8px;">This shared snapshot has no matching records</div></td></tr>';
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-state"><div style="font-size:32px;">📋</div><div style="font-weight:600;margin-top:8px;">No records in this shared snapshot</div><div style="font-size:12px;margin-top:4px;">The person who shared this link may have applied filters that returned no results, or clicked Share before loading data.</div></td></tr>`;
         return;
       }
-      try {
-        tbody.innerHTML = sharedSnapshot.records.map((r, i) => {
-          const names = Array.isArray(r.names) ? r.names : [];
-          const nameList = names.map(n => `<span style="display:inline-block;background:var(--navy)11;border-radius:4px;padding:3px 8px;margin:2px;font-size:11px;border:1px solid var(--border);">${n}</span>`).join('');
-          return `<tr style="${i % 2 === 0 ? 'background:var(--white);' : 'background:var(--rowAlt);'}">
-            <td style="font-weight:600;color:var(--navy);">${i + 1}</td>
-            <td style="font-weight:600;color:var(--navy);max-width:180px;font-size:12px;">${r.title || ''}</td>
-            <td style="font-weight:700;color:var(--gold);font-size:16px;">${r.count != null ? r.count : names.length}</td>
-            <td style="max-width:320px;">${nameList}</td>
-            <td style="color:var(--muted);font-size:12px;">${r.date || ''}</td>
-            <td style="color:var(--muted);font-size:12px;">${r.time || ''}</td>
-          </tr>`;
-        }).join('');
-      } catch (err) {
-        console.error('[Shared Report] failed to render rows:', err);
-        tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div style="font-size:32px;">⚠️</div><div style="font-weight:600;margin-top:8px;">Error displaying records — check browser console for details</div></td></tr>';
-      }
+
+      tbody.innerHTML = sharedSnapshot.records.map((r, i) => {
+        const nameList = r.names.map(n => `<span style="display:inline-block;background:var(--navy)11;border-radius:4px;padding:3px 8px;margin:2px;font-size:11px;border:1px solid var(--border);">${n}</span>`).join('');
+        return `<tr style="${i % 2 === 0 ? 'background:var(--white);' : 'background:var(--rowAlt);'}">
+          <td style="font-weight:600;color:var(--navy);">${i + 1}</td>
+          <td style="font-weight:600;color:var(--navy);max-width:180px;font-size:12px;">${r.title}</td>
+          <td style="font-weight:700;color:var(--gold);font-size:16px;">${r.count}</td>
+          <td style="max-width:320px;">${nameList}</td>
+          <td style="color:var(--muted);font-size:12px;">${r.date}</td>
+          <td style="color:var(--muted);font-size:12px;">${r.time}</td>
+        </tr>`;
+      }).join('');
     }
 
     // Loads employees from Firestore. On first-ever run (empty collection)
